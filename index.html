@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Partage sécurisé de texte</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 600px;
+      margin: 2rem auto;
+      padding: 1rem;
+      background: #f5f5f5;
+      border-radius: 10px;
+    }
+    textarea, input, select {
+      width: 100%;
+      margin: 0.5rem 0;
+      padding: 0.5rem;
+      font-size: 1rem;
+    }
+    button {
+      padding: 0.7rem 1.2rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    pre {
+      background: #eee;
+      padding: 0.5rem;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔒 Partage sécurisé de texte</h1>
+  <div id="app"></div>
+
+  <script>
+    // --- Utils ---
+    function bufToBase64(buf) {
+      return btoa(String.fromCharCode(...new Uint8Array(buf)));
+    }
+    function base64ToBuf(b64) {
+      return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    }
+
+    // --- Crypto ---
+    async function deriveKey(password, salt="fixedsalt") {
+      const enc = new TextEncoder();
+      const keyMaterial = await crypto.subtle.importKey(
+        "raw", enc.encode(password),
+        { name: "PBKDF2" },
+        false,
+        ["deriveKey"]
+      );
+      return crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: enc.encode(salt), iterations: 100000, hash: "SHA-256" },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+      );
+    }
+
+    async function encryptText(text, password, expMinutes) {
+      const enc = new TextEncoder();
+      const key = await deriveKey(password);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(text));
+      return btoa(JSON.stringify({
+        iv: Array.from(iv),
+        data: bufToBase64(ciphertext),
+        exp: Date.now() + expMinutes*60*1000
+      }));
+    }
+
+    async function decryptText(b64, password) {
+      const payload = JSON.parse(atob(b64));
+      if (Date.now() > payload.exp) throw new Error("⏰ Lien expiré");
+      const key = await deriveKey(password);
+      const iv = new Uint8Array(payload.iv);
+      const ciphertext = base64ToBuf(payload.data);
+      const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+      return new TextDecoder().decode(plaintext);
+    }
+
+    // --- UI ---
+    function showCreator() {
+      document.getElementById("app").innerHTML = `
+        <h2>Créer un lien</h2>
+        <textarea id="msg" rows="6" placeholder="Écris ton message..."></textarea>
+        <input type="password" id="pw" placeholder="Mot de passe">
+        <label>Durée d'expiration :
+          <select id="exp">
+            <option value="10">10 min</option>
+            <option value="60">1 heure</option>
+            <option value="1440">24 heures</option>
+            <option value="10080">7 jours</option>
+          </select>
+        </label>
+        <button id="go">Générer le lien</button>
+        <h3>Lien :</h3>
+        <pre id="out"></pre>
+      `;
+      document.getElementById("go").onclick = async () => {
+        const msg = document.getElementById("msg").value.trim();
+        const pw = document.getElementById("pw").value.trim();
+        const exp = parseInt(document.getElementById("exp").value);
+        if (!msg || !pw) {
+          alert("⚠️ Texte et mot de passe obligatoires !");
+          return;
+        }
+        const b64 = await encryptText(msg, pw, exp);
+        document.getElementById("out").textContent = location.origin + location.pathname + "#data=" + b64;
+      };
+    }
+
+    function showReader(b64) {
+      document.getElementById("app").innerHTML = `
+        <h2>Lire un message</h2>
+        <p>Ce lien contient un texte chiffré. Entrez le mot de passe :</p>
+        <input type="password" id="pw" placeholder="Mot de passe">
+        <button id="dec">Déchiffrer</button>
+        <h3>Résultat :</h3>
+        <pre id="out"></pre>
+      `;
+      document.getElementById("dec").onclick = async () => {
+        const pw = document.getElementById("pw").value.trim();
+        try {
+          const txt = await decryptText(b64, pw);
+          document.getElementById("out").textContent = txt;
+        } catch (e) {
+          document.getElementById("out").textContent = "Erreur : " + e.message;
+        }
+      };
+    }
+
+    // --- Init ---
+    if (location.hash.startsWith("#data=")) {
+      showReader(location.hash.slice(6));
+    } else {
+      showCreator();
+    }
+  </script>
+</body>
+</html>
