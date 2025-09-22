@@ -58,10 +58,55 @@ Cet outil est conçu pour des partages d'informations sensibles à faible enjeu 
 5.  **Attaques par Ingénierie Sociale (Phishing)**
     - Un attaquant pourrait héberger une version modifiée de cette page sur un domaine similaire et tromper un utilisateur pour qu'il y entre son mot de passe et son message. La page malveillante pourrait alors exfiltrer les secrets. Il est crucial de s'assurer de l'intégrité du code source utilisé.
 
-## 📜 Recommandations de Sécurité
+## � Améliorations de Sécurité
 
-- **Utilisez des mots de passe forts et uniques.**
-- **Partagez le mot de passe via un canal différent** de celui utilisé pour partager le lien.
-- **Vérifiez l'intégrité du code** si vous ne l'ouvrez pas depuis une source de confiance.
-- **Ne l'utilisez pas sur un ordinateur public ou non fiable.**
-- Comprenez que la date d'expiration peut être contournée par un utilisateur averti.
+Suite à un audit de sécurité approfondi, plusieurs améliorations ont été apportées pour renforcer la sécurité de l'application :
+
+1. **Sels Cryptographiques Aléatoires**
+   - **Avant :** Utilisation de sels fixes pour la dérivation des clés.
+   - **Après :** Chaque message utilise désormais des sels aléatoires cryptographiquement forts (16 octets), générés via `crypto.getRandomValues()`.
+   - **Bénéfice :** Protection contre les attaques par table pré-calculée (rainbow tables) et garantie que deux messages avec le même mot de passe auront des clés complètement différentes.
+
+2. **Paramètres de Sécurité Configurables**
+   - **Avant :** Nombre fixe d'itérations PBKDF2 (100 000).
+   - **Après :** L'utilisateur peut choisir entre différents niveaux de sécurité (100 000, 200 000, ou 500 000 itérations).
+   - **Bénéfice :** Adaptation du niveau de sécurité aux besoins et augmentation significative de la résistance aux attaques par force brute.
+
+3. **Validation de la Complexité des Mots de Passe**
+   - **Avant :** Aucune vérification de la force du mot de passe.
+   - **Après :** Indicateur visuel de force du mot de passe et suggestions pour l'améliorer (longueur, diversité de caractères).
+   - **Bénéfice :** Incitation à choisir des mots de passe plus robustes et prévention contre les mots de passe trivialement devinables.
+
+4. **Informations Temporelles Détaillées**
+   - **Avant :** Messages génériques sur l'expiration des liens.
+   - **Après :** Affichage détaillé des informations temporelles, incluant l'heure exacte d'expiration et le temps restant.
+   - **Bénéfice :** Meilleure gestion du cycle de vie des messages et diagnostic facilité des problèmes liés à l'horloge système.
+
+### Limitations Restantes
+
+Malgré ces améliorations, certaines limitations fondamentales demeurent inhérentes à ce type d'architecture :
+
+1. **Absence d'Authentification des Utilisateurs**
+   - Sans un serveur d'authentification, il n'existe pas de moyen de vérifier l'identité de l'expéditeur ou du destinataire.
+
+2. **Impossibilité de Révoquer un Message**
+   - Une fois un lien créé, il reste valide jusqu'à son expiration. Il n'existe aucun mécanisme pour révoquer un lien avant sa date d'expiration.
+
+3. **Vulnérabilité aux Malwares et Keyloggers**
+   - La sécurité dépend entièrement de l'intégrité du poste client. Un système compromis peut capturer les données en clair.
+
+4. **Vulnérabilité à la Manipulation de l'Horloge**
+   - Un utilisateur disposant des droits administratifs sur sa machine peut toujours modifier l'horloge système pour contourner les restrictions temporelles.
+
+### Mesures Compensatoires
+
+Pour atténuer ces risques, considérez les pratiques suivantes :
+
+1. **Utilisation d'appareils fiables et à jour**
+   - Utilisez uniquement des appareils dont vous maîtrisez la sécurité et maintenez-les à jour.
+
+2. **Double Canal pour le Mot de Passe**
+   - Partagez le lien et le mot de passe via des canaux de communication différents.
+
+3. **Durées d'Expiration Courtes**
+   - Privilégiez les durées d'expiration les plus courtes possibles pour limiter la fenêtre d'opportunité d'une attaque.

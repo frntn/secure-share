@@ -134,7 +134,7 @@
     }
 
     // --- Crypto ---
-    async function deriveKeys(password) {
+    async function deriveKeys(password, saltAes, saltHmac, iterations = 100000) {
       const enc = new TextEncoder();
       const keyMaterial = await crypto.subtle.importKey(
         "raw", enc.encode(password),
@@ -145,7 +145,7 @@
 
       // Clé pour le chiffrement AES
       const encKey = await crypto.subtle.deriveKey(
-        { name: "PBKDF2", salt: enc.encode("salt-for-aes"), iterations: 100000, hash: "SHA-256" },
+        { name: "PBKDF2", salt: saltAes, iterations: iterations, hash: "SHA-256" },
         keyMaterial,
         { name: "AES-GCM", length: 256 },
         false,
@@ -154,7 +154,7 @@
 
       // Clé pour la signature HMAC
       const signKey = await crypto.subtle.deriveKey(
-        { name: "PBKDF2", salt: enc.encode("salt-for-hmac"), iterations: 100000, hash: "SHA-256" },
+        { name: "PBKDF2", salt: saltHmac, iterations: iterations, hash: "SHA-256" },
         keyMaterial,
         { name: "HMAC", hash: "SHA-256" },
         false,
@@ -164,9 +164,14 @@
       return { encKey, signKey };
     }
 
-    async function encryptText(text, password, expMinutes) {
+    async function encryptText(text, password, expMinutes, iterations = 100000) {
       const enc = new TextEncoder();
-      const { encKey, signKey } = await deriveKeys(password);
+      
+      // Génération de sels aléatoires
+      const saltAes = crypto.getRandomValues(new Uint8Array(16));
+      const saltHmac = crypto.getRandomValues(new Uint8Array(16));
+      
+      const { encKey, signKey } = await deriveKeys(password, saltAes, saltHmac, iterations);
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, encKey, enc.encode(text));
       
@@ -176,6 +181,9 @@
       const payload = JSON.stringify({
         iv: Array.from(iv),
         data: bufToBase64(ciphertext),
+        saltAes: Array.from(saltAes),
+        saltHmac: Array.from(saltHmac),
+        iterations: iterations,
         iat,
         exp
       });
@@ -190,7 +198,14 @@
 
     async function decryptText(b64, password) {
       const { p: payloadStr, s: signatureB64 } = JSON.parse(atob(b64));
-      const { encKey, signKey } = await deriveKeys(password);
+      const payload = JSON.parse(payloadStr);
+      
+      // Récupération des sels et nombre d'itérations du payload
+      const saltAes = new Uint8Array(payload.saltAes);
+      const saltHmac = new Uint8Array(payload.saltHmac);
+      const iterations = payload.iterations || 100000;
+      
+      const { encKey, signKey } = await deriveKeys(password, saltAes, saltHmac, iterations);
       
       const signature = base64ToBuf(signatureB64);
       const isValid = await crypto.subtle.verify("HMAC", signKey, signature, new TextEncoder().encode(payloadStr));
@@ -199,20 +214,32 @@
         throw new Error("🚫 Signature invalide. Les données ont peut-être été altérées.");
       }
 
-      const payload = JSON.parse(payloadStr);
       const now = Date.now();
+      const creationTime = new Date(payload.iat);
+      const expirationTime = new Date(payload.exp);
 
+      // Vérification plus détaillée des dates
       if (now < payload.iat) {
-        throw new Error("⏳ Lien pas encore valide (vérifiez l'horloge de votre appareil).");
-      }
-      if (now > payload.exp) {
-        throw new Error("⏰ Lien expiré.");
+        const timeDiff = Math.round((payload.iat - now) / (60 * 1000));
+        throw new Error(`⏳ Ce message n'est pas encore valide. Il sera accessible dans environ ${timeDiff} minutes. Votre horloge est peut-être en retard.`);
       }
       
+      if (now > payload.exp) {
+        const expiredSince = Math.round((now - payload.exp) / (60 * 1000));
+        throw new Error(`⏰ Lien expiré depuis environ ${expiredSince} minutes (créé le ${creationTime.toLocaleString()}, expiré le ${expirationTime.toLocaleString()}).`);
+      }
+      
+      // Si nous sommes ici, les vérifications temporelles sont passées
       const iv = new Uint8Array(payload.iv);
       const ciphertext = base64ToBuf(payload.data);
       const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, encKey, ciphertext);
-      return new TextDecoder().decode(plaintext);
+      
+      // Calculer le temps restant avant expiration
+      const minutesRemaining = Math.round((payload.exp - now) / (60 * 1000));
+      const textWithTimeInfo = new TextDecoder().decode(plaintext) + 
+        `\n\n---\nMessage valide pour encore ${minutesRemaining} minutes. Expire le ${expirationTime.toLocaleString()}.`;
+      
+      return textWithTimeInfo;
     }
 
     // --- UI ---
@@ -221,6 +248,8 @@
         <h2>Créer un lien</h2>
         <textarea id="msg" rows="6" placeholder="Écrivez votre message secret ici..."></textarea>
         <input type="password" id="pw" placeholder="Mot de passe">
+        <div id="pw-strength" style="height: 5px; width: 100%; background: #f0f0f0; margin-bottom: 10px;"></div>
+        <div id="pw-feedback" style="font-size: 0.8rem; color: hsl(var(--muted-foreground)); margin-bottom: 10px;"></div>
         <label for="exp">Durée d'expiration</label>
         <select id="exp">
           <option value="10">10 minutes</option>
@@ -228,20 +257,116 @@
           <option value="1440">24 heures</option>
           <option value="10080">7 jours</option>
         </select>
+        <details>
+          <summary style="cursor: pointer; margin: 1rem 0; color: hsl(var(--muted-foreground));">Paramètres de sécurité avancés</summary>
+          <div style="padding: 1rem; background: hsl(var(--secondary)); border-radius: var(--radius); margin-bottom: 1rem;">
+            <label for="iterations">Nombre d'itérations PBKDF2</label>
+            <select id="iterations">
+              <option value="100000">Standard (100,000 itérations)</option>
+              <option value="200000">Renforcé (200,000 itérations)</option>
+              <option value="500000">Haute sécurité (500,000 itérations)</option>
+            </select>
+            <p style="font-size: 0.8rem; color: hsl(var(--muted-foreground));">Un nombre d'itérations plus élevé renforce la sécurité mais peut ralentir le chiffrement/déchiffrement.</p>
+          </div>
+        </details>
         <button id="go">Générer le lien</button>
         <h3>Lien sécurisé :</h3>
         <pre id="out"></pre>
       `;
+      
+      // Vérification de la force du mot de passe
+      const pwInput = document.getElementById("pw");
+      const pwStrength = document.getElementById("pw-strength");
+      const pwFeedback = document.getElementById("pw-feedback");
+      
+      pwInput.addEventListener("input", function() {
+        checkPasswordStrength(this.value);
+      });
+      
+      function checkPasswordStrength(password) {
+        let strength = 0;
+        let feedback = [];
+        
+        if (password.length === 0) {
+          pwStrength.style.width = "0%";
+          pwStrength.style.background = "#f0f0f0";
+          pwFeedback.textContent = "";
+          return;
+        }
+        
+        // Longueur
+        if (password.length < 8) {
+          feedback.push("Le mot de passe devrait contenir au moins 8 caractères.");
+        } else {
+          strength += 25;
+        }
+        
+        // Contient des chiffres
+        if (/\d/.test(password)) {
+          strength += 25;
+        } else {
+          feedback.push("Ajoutez des chiffres.");
+        }
+        
+        // Contient des minuscules et majuscules
+        if (/[a-z]/.test(password) && /[A-Z]/.test(password)) {
+          strength += 25;
+        } else {
+          feedback.push("Ajoutez des lettres majuscules et minuscules.");
+        }
+        
+        // Contient des caractères spéciaux
+        if (/[^a-zA-Z0-9]/.test(password)) {
+          strength += 25;
+        } else {
+          feedback.push("Ajoutez des caractères spéciaux.");
+        }
+        
+        // Mettre à jour la barre de progression
+        pwStrength.style.width = strength + "%";
+        
+        // Couleur de la barre basée sur la force
+        if (strength < 50) {
+          pwStrength.style.background = "#FF4136"; // Rouge
+        } else if (strength < 75) {
+          pwStrength.style.background = "#FFDC00"; // Jaune
+        } else {
+          pwStrength.style.background = "#2ECC40"; // Vert
+        }
+        
+        // Afficher le feedback
+        pwFeedback.innerHTML = feedback.length > 0 ? feedback.join("<br>") : "Mot de passe de force acceptable.";
+      }
+      
       document.getElementById("go").onclick = async () => {
         const msg = document.getElementById("msg").value.trim();
         const pw = document.getElementById("pw").value.trim();
         const exp = parseInt(document.getElementById("exp").value);
-        if (!msg || !pw) {
-          alert("⚠️ Texte et mot de passe obligatoires !");
+        const iterations = parseInt(document.getElementById("iterations").value);
+        
+        if (!msg) {
+          alert("⚠️ Le message ne peut pas être vide !");
           return;
         }
-        const b64 = await encryptText(msg, pw, exp);
-        document.getElementById("out").textContent = location.origin + location.pathname + "#data=" + b64;
+        
+        if (!pw) {
+          alert("⚠️ Le mot de passe est obligatoire !");
+          return;
+        }
+        
+        // Vérification de la force minimale du mot de passe
+        if (pw.length < 8) {
+          if (!confirm("⚠️ Votre mot de passe est trop court (moins de 8 caractères). Continuer quand même ?")) {
+            return;
+          }
+        }
+        
+        try {
+          const b64 = await encryptText(msg, pw, exp, iterations);
+          document.getElementById("out").textContent = location.origin + location.pathname + "#data=" + b64;
+        } catch (e) {
+          alert("Erreur lors du chiffrement : " + e.message);
+        }
       };
     }
 
