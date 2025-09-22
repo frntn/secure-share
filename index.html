@@ -418,7 +418,9 @@
         <pre id="out"></pre>
         <div id="loading" style="display: none; text-align: center; margin: 1rem 0;">
           <div style="display: inline-block; width: 20px; height: 20px; border: 3px solid hsl(var(--secondary)); border-radius: 50%; border-top-color: hsl(var(--primary)); animation: spin 1s linear infinite;"></div>
-          <p style="margin-top: 0.5rem; color: hsl(var(--muted-foreground));">Chiffrement en cours...</p>
+          <p style="margin-top: 0.5rem; color: hsl(var(--muted-foreground));">
+            Chiffrement en cours... <span id="timer">0s</span>
+          </p>
         </div>
         <div id="time-notice" style="margin-top: 1rem; padding: 0.75rem; background: hsl(var(--secondary)); border-radius: var(--radius); font-size: 0.9rem; display: none;"></div>
       `;
@@ -528,6 +530,14 @@
           loadingIndicator.style.display = "block";
           outputElement.textContent = "Génération du lien sécurisé...";
           
+          // Démarrer le compteur de temps
+          const timerElement = document.getElementById("timer");
+          let seconds = 0;
+          const timer = setInterval(() => {
+            seconds++;
+            timerElement.textContent = seconds + "s";
+          }, 1000);
+          
           // Petit délai pour que l'interface se mette à jour avant le traitement intensif
           await new Promise(resolve => setTimeout(resolve, 50));
           
@@ -576,6 +586,9 @@
         } catch (e) {
           outputElement.textContent = "Erreur : " + e.message;
         } finally {
+          // Arrêter le compteur
+          clearInterval(timer);
+          
           // Réactiver les contrôles et masquer l'animation de chargement
           generateButton.disabled = false;
           messageInput.disabled = false;
@@ -606,7 +619,9 @@
         <pre id="out"></pre>
         <div id="loading" style="display: none; text-align: center; margin: 1rem 0;">
           <div style="display: inline-block; width: 20px; height: 20px; border: 3px solid hsl(var(--secondary)); border-radius: 50%; border-top-color: hsl(var(--primary)); animation: spin 1s linear infinite;"></div>
-          <p style="margin-top: 0.5rem; color: hsl(var(--muted-foreground));">Déchiffrement en cours...</p>
+          <p style="margin-top: 0.5rem; color: hsl(var(--muted-foreground));">
+            Déchiffrement en cours... <span id="timer">0s</span>
+          </p>
         </div>
       `;
       
@@ -642,6 +657,14 @@
         decryptButton.disabled = true;
         passwordInput.disabled = true;
         
+        // Démarrer le compteur de temps
+        const timerElement = document.getElementById("timer");
+        let seconds = 0;
+        const timer = setInterval(() => {
+          seconds++;
+          timerElement.textContent = seconds + "s";
+        }, 1000);
+        
         try {
           // Petit délai pour que l'interface se mette à jour avant le traitement intensif
           await new Promise(resolve => setTimeout(resolve, 50));
@@ -651,6 +674,9 @@
         } catch (e) {
           outputElement.textContent = "Erreur : " + e.message;
         } finally {
+          // Arrêter le compteur
+          clearInterval(timer);
+          
           // Masquer l'indicateur de chargement quoi qu'il arrive
           loadingIndicator.style.display = "none";
           decryptButton.disabled = false;
