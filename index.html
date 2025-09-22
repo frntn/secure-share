@@ -391,32 +391,38 @@
     function showCreator() {
       document.getElementById("app").innerHTML = `
         <h2>Créer un lien</h2>
-        <textarea id="msg" rows="6" placeholder="Écrivez votre message secret ici..."></textarea>
-        <input type="password" id="pw" placeholder="Mot de passe">
-        <div id="pw-strength" style="height: 5px; width: 100%; background: #f0f0f0; margin-bottom: 10px;"></div>
-        <div id="pw-feedback" style="font-size: 0.8rem; color: hsl(var(--muted-foreground)); margin-bottom: 10px;"></div>
-        <label for="exp">Durée d'expiration</label>
-        <select id="exp">
-          <option value="10">10 minutes</option>
-          <option value="60">1 heure</option>
-          <option value="1440">24 heures</option>
-          <option value="10080">7 jours</option>
-        </select>
-        <details>
-          <summary style="cursor: pointer; margin: 1rem 0; color: hsl(var(--muted-foreground));">Paramètres de sécurité avancés</summary>
-          <div style="padding: 1rem; background: hsl(var(--secondary)); border-radius: var(--radius); margin-bottom: 1rem;">
-            <label for="iterations">Nombre d'itérations PBKDF2</label>
-            <select id="iterations">
-              <option value="100000">Standard (100,000 itérations)</option>
-              <option value="200000">Renforcé (200,000 itérations)</option>
-              <option value="500000">Haute sécurité (500,000 itérations)</option>
-            </select>
-            <p style="font-size: 0.8rem; color: hsl(var(--muted-foreground));">Un nombre d'itérations plus élevé renforce la sécurité mais peut ralentir le chiffrement/déchiffrement.</p>
-          </div>
-        </details>
-        <button id="go">Générer le lien</button>
+        <form id="encrypt-form" onsubmit="return false;">
+          <textarea id="msg" rows="6" placeholder="Écrivez votre message secret ici..."></textarea>
+          <input type="password" id="pw" placeholder="Mot de passe">
+          <div id="pw-strength" style="height: 5px; width: 100%; background: #f0f0f0; margin-bottom: 10px;"></div>
+          <div id="pw-feedback" style="font-size: 0.8rem; color: hsl(var(--muted-foreground)); margin-bottom: 10px;"></div>
+          <label for="exp">Durée d'expiration</label>
+          <select id="exp">
+            <option value="10">10 minutes</option>
+            <option value="60">1 heure</option>
+            <option value="1440">24 heures</option>
+            <option value="10080">7 jours</option>
+          </select>
+          <details>
+            <summary style="cursor: pointer; margin: 1rem 0; color: hsl(var(--muted-foreground));">Paramètres de sécurité avancés</summary>
+            <div style="padding: 1rem; background: hsl(var(--secondary)); border-radius: var(--radius); margin-bottom: 1rem;">
+              <label for="iterations">Nombre d'itérations PBKDF2</label>
+              <select id="iterations">
+                <option value="100000">Standard (100,000 itérations)</option>
+                <option value="200000">Renforcé (200,000 itérations)</option>
+                <option value="500000">Haute sécurité (500,000 itérations)</option>
+              </select>
+              <p style="font-size: 0.8rem; color: hsl(var(--muted-foreground));">Un nombre d'itérations plus élevé renforce la sécurité mais peut ralentir le chiffrement/déchiffrement.</p>
+            </div>
+          </details>
+          <button type="submit" id="go">Générer le lien</button>
+        </form>
         <h3>Lien sécurisé :</h3>
         <pre id="out"></pre>
+        <div id="loading" style="display: none; text-align: center; margin: 1rem 0;">
+          <div style="display: inline-block; width: 20px; height: 20px; border: 3px solid hsl(var(--secondary)); border-radius: 50%; border-top-color: hsl(var(--primary)); animation: spin 1s linear infinite;"></div>
+          <p style="margin-top: 0.5rem; color: hsl(var(--muted-foreground));">Chiffrement en cours...</p>
+        </div>
         <div id="time-notice" style="margin-top: 1rem; padding: 0.75rem; background: hsl(var(--secondary)); border-radius: var(--radius); font-size: 0.9rem; display: none;"></div>
       `;
       
@@ -484,9 +490,17 @@
         pwFeedback.innerHTML = feedback.length > 0 ? feedback.join("<br>") : "Mot de passe de force acceptable.";
       }
       
-      document.getElementById("go").onclick = async () => {
-        const msg = document.getElementById("msg").value.trim();
-        const pw = document.getElementById("pw").value.trim();
+      // Récupérer les éléments du DOM pour l'animation et l'interaction
+      const encryptForm = document.getElementById("encrypt-form");
+      const generateButton = document.getElementById("go");
+      const messageInput = document.getElementById("msg");
+      const passwordInput = document.getElementById("pw");
+      const loadingIndicator = document.getElementById("loading");
+      const outputElement = document.getElementById("out");
+      
+      const performEncryption = async () => {
+        const msg = messageInput.value.trim();
+        const pw = passwordInput.value.trim();
         const exp = parseInt(document.getElementById("exp").value);
         const iterations = parseInt(document.getElementById("iterations").value);
         
@@ -508,7 +522,17 @@
         }
         
         try {
-          document.getElementById("out").textContent = "Génération du lien sécurisé...";
+          // Désactiver les contrôles et afficher l'animation de chargement
+          generateButton.disabled = true;
+          messageInput.disabled = true;
+          passwordInput.disabled = true;
+          document.getElementById("exp").disabled = true;
+          document.getElementById("iterations").disabled = true;
+          loadingIndicator.style.display = "block";
+          outputElement.textContent = "Génération du lien sécurisé...";
+          
+          // Petit délai pour que l'interface se mette à jour avant le traitement intensif
+          await new Promise(resolve => setTimeout(resolve, 50));
           
           // Vérification préalable de l'horloge consensus
           const consensusTime = await getConsensusTime();
@@ -549,12 +573,27 @@
           const b64 = await encryptText(msg, pw, exp, iterations);
           const secureLink = location.origin + location.pathname + "#data=" + b64;
           
-          document.getElementById("out").textContent = secureLink;
+          outputElement.textContent = secureLink;
           document.getElementById("time-notice").innerHTML = timeNotice;
           document.getElementById("time-notice").style.display = "block";
         } catch (e) {
-          alert("Erreur lors du chiffrement : " + e.message);
+          outputElement.textContent = "Erreur : " + e.message;
+        } finally {
+          // Réactiver les contrôles et masquer l'animation de chargement
+          generateButton.disabled = false;
+          messageInput.disabled = false;
+          passwordInput.disabled = false;
+          document.getElementById("exp").disabled = false;
+          document.getElementById("iterations").disabled = false;
+          loadingIndicator.style.display = "none";
         }
+      };
+      
+      // Associer la fonction aux événements
+      generateButton.onclick = performEncryption;
+      encryptForm.onsubmit = (e) => {
+        e.preventDefault();
+        performEncryption();
       };
     }
 
@@ -562,20 +601,76 @@
       document.getElementById("app").innerHTML = `
         <h2>Lire un message</h2>
         <p style="color: hsl(var(--muted-foreground)); font-size: 0.9rem;">Ce lien contient un texte chiffré. Entrez le mot de passe pour le révéler.</p>
-        <input type="password" id="pw" placeholder="Mot de passe">
-        <button id="dec">Déchiffrer</button>
+        <form id="decrypt-form" onsubmit="return false;">
+          <input type="password" id="pw" placeholder="Mot de passe">
+          <button type="submit" id="dec">Déchiffrer</button>
+        </form>
         <h3>Résultat :</h3>
         <pre id="out"></pre>
+        <div id="loading" style="display: none; text-align: center; margin: 1rem 0;">
+          <div style="display: inline-block; width: 20px; height: 20px; border: 3px solid hsl(var(--secondary)); border-radius: 50%; border-top-color: hsl(var(--primary)); animation: spin 1s linear infinite;"></div>
+          <p style="margin-top: 0.5rem; color: hsl(var(--muted-foreground));">Déchiffrement en cours...</p>
+        </div>
       `;
-      document.getElementById("dec").onclick = async () => {
-        const pw = document.getElementById("pw").value.trim();
+      
+      // Ajouter l'animation de chargement en CSS
+      if (!document.getElementById('spin-animation')) {
+        const style = document.createElement('style');
+        style.id = 'spin-animation';
+        style.textContent = `
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+      
+      // Gérer à la fois le clic sur le bouton et la touche Entrée
+      const decryptForm = document.getElementById("decrypt-form");
+      const decryptButton = document.getElementById("dec");
+      const passwordInput = document.getElementById("pw");
+      const loadingIndicator = document.getElementById("loading");
+      const outputElement = document.getElementById("out");
+      
+      const performDecryption = async () => {
+        const pw = passwordInput.value.trim();
+        if (!pw) {
+          alert("⚠️ Veuillez entrer un mot de passe.");
+          return;
+        }
+        
+        // Afficher l'indicateur de chargement
+        loadingIndicator.style.display = "block";
+        outputElement.textContent = "";
+        decryptButton.disabled = true;
+        passwordInput.disabled = true;
+        
         try {
+          // Petit délai pour que l'interface se mette à jour avant le traitement intensif
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
           const txt = await decryptText(b64, pw);
-          document.getElementById("out").textContent = txt;
+          outputElement.textContent = txt;
         } catch (e) {
-          document.getElementById("out").textContent = "Erreur : " + e.message;
+          outputElement.textContent = "Erreur : " + e.message;
+        } finally {
+          // Masquer l'indicateur de chargement quoi qu'il arrive
+          loadingIndicator.style.display = "none";
+          decryptButton.disabled = false;
+          passwordInput.disabled = false;
+          passwordInput.focus();
         }
       };
+      
+      // Associer la fonction aux événements
+      decryptButton.onclick = performDecryption;
+      decryptForm.onsubmit = (e) => {
+        e.preventDefault();
+        performDecryption();
+      };
+      
+      // Mettre le focus sur le champ de mot de passe au chargement
+      passwordInput.focus();
     }
 
     // --- Init ---
