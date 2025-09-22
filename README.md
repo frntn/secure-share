@@ -55,10 +55,6 @@ Cet outil est conçu pour des partages d'informations sensibles à faible enjeu 
     - La validation de l'expiration (`iat` et `exp`) dépend de l'horloge du système du destinataire. Un utilisateur averti peut contourner la restriction d'expiration en modifiant manuellement l'heure de son ordinateur pour la faire correspondre à la fenêtre de validité du lien.
     - **Conclusion :** La date d'expiration est une sécurité de "convenance", pas une garantie cryptographique absolue contre un acteur déterminé.
 
-4.  **Fuite de Métadonnées**
-    - Le lien lui-même (`...#data=...`) est une métadonnée. Sa transmission peut être observée par des intermédiaires réseau (fournisseurs d'accès, administrateurs réseau d'entreprise, etc.).
-    - Bien que le contenu soit chiffré, le simple fait qu'un échange sécurisé ait eu lieu entre deux parties peut être une information sensible en soi.
-
 5.  **Attaques par Ingénierie Sociale (Phishing)**
     - Un attaquant pourrait héberger une version modifiée de cette page sur un domaine similaire et tromper un utilisateur pour qu'il y entre son mot de passe et son message. La page malveillante pourrait alors exfiltrer les secrets. Il est crucial de s'assurer de l'intégrité du code source utilisé.
 
