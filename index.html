@@ -132,12 +132,131 @@
     function base64ToBuf(b64) {
       return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
     }
+    
+    // Fonction pour obtenir l'heure du serveur avec vérification de domaine
+    async function getServerTime() {
+      try {
+        // 1. Vérifier que nous sommes bien sur GitHub Pages ou un domaine approuvé
+        const currentDomain = window.location.hostname;
+        const approvedDomains = [
+          'github.io',                       // GitHub Pages
+          'githubusercontent.com',           // GitHub raw content
+          'pages.github.com',               // GitHub Pages
+          'frntn.github.io'                 // Votre domaine GitHub Pages spécifique
+        ];
+        
+        let isDomainApproved = false;
+        for (const domain of approvedDomains) {
+          if (currentDomain === domain || currentDomain.endsWith('.' + domain)) {
+            isDomainApproved = true;
+            break;
+          }
+        }
+        
+        if (!isDomainApproved) {
+          console.warn("Domaine non approuvé pour la récupération de l'heure:", currentDomain);
+          throw new Error("Domaine non approuvé");
+        }
+        
+        // 2. Récupérer l'heure du serveur via la requête HEAD
+        const response = await fetch(window.location.href, { 
+          method: 'HEAD',
+          cache: 'no-store' // Empêcher la mise en cache qui pourrait fournir une ancienne date
+        });
+        
+        if (!response.ok) throw new Error("Erreur lors de la récupération de l'heure du serveur");
+        
+        // 3. Vérifier que la réponse vient bien de GitHub
+        const serverHeader = response.headers.get('server');
+        if (!serverHeader || !serverHeader.toLowerCase().includes('github')) {
+          console.warn("En-tête de serveur non reconnu:", serverHeader);
+          throw new Error("Serveur non reconnu");
+        }
+        
+        // 4. Récupération de la date
+        const serverDate = response.headers.get('date');
+        if (!serverDate) throw new Error("L'en-tête 'date' est manquant dans la réponse du serveur");
+        
+        return new Date(serverDate).getTime(); // Convertir en timestamp
+      } catch (error) {
+        console.warn("Impossible d'obtenir l'heure du serveur:", error);
+        return null; // En cas d'échec, on retournera null
+      }
+    }
 
-    // --- Crypto ---
-    async function deriveKeys(password, saltAes, saltHmac, iterations = 100000) {
+    // Fonction pour obtenir l'heure depuis plusieurs sources externes et faire un consensus
+    async function getConsensusTime() {
+      try {
+        // Liste de services d'horloge publics qui supportent CORS
+        const timeServices = [
+          "https://worldtimeapi.org/api/ip",                  // World Time API
+          "https://worldclockapi.com/api/json/utc/now",       // World Clock API
+          "https://timeapi.io/api/Time/current/zone?timeZone=UTC" // Time API
+        ];
+        
+        // Fonction pour extraire l'heure de chaque API
+        const extractTime = async (url) => {
+          try {
+            const response = await fetch(url, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`Erreur ${response.status}`);
+            
+            const data = await response.json();
+            
+            // Chaque API a un format différent, nous devons adapter l'extraction
+            if (url.includes('worldtimeapi')) {
+              return new Date(data.utc_datetime).getTime();
+            } else if (url.includes('worldclockapi')) {
+              return new Date(data.currentDateTime).getTime();
+            } else if (url.includes('timeapi.io')) {
+              return new Date(data.dateTime).getTime();
+            }
+            return null;
+          } catch (e) {
+            console.warn(`Erreur avec ${url}:`, e);
+            return null;
+          }
+        };
+        
+        // Récupérer l'heure depuis GitHub Pages également
+        const githubTime = await getServerTime();
+        
+        // Récupérer l'heure depuis les services externes
+        const timePromises = timeServices.map(extractTime);
+        const times = await Promise.all(timePromises);
+        
+        // Filtrer les résultats null et ajouter l'heure GitHub si disponible
+        const validTimes = times.filter(time => time !== null);
+        if (githubTime) validTimes.push(githubTime);
+        
+        if (validTimes.length === 0) {
+          console.warn("Aucune source de temps valide disponible");
+          return null;
+        }
+        
+        // Algorithme de consensus simple : utiliser la médiane des temps disponibles
+        // pour résister aux valeurs aberrantes
+        validTimes.sort((a, b) => a - b);
+        const medianIndex = Math.floor(validTimes.length / 2);
+        const consensusTime = validTimes[medianIndex];
+        
+        console.log("Sources de temps consultées:", validTimes.length);
+        console.log("Temps médian retenu:", new Date(consensusTime).toISOString());
+        
+        return consensusTime;
+      } catch (error) {
+        console.warn("Erreur lors de l'obtention du consensus temporel:", error);
+        return null;
+      }
+    }
+    
+    // Dérivation des clés
+    async function deriveKeys(password, saltAes, saltHmac, iterations) {
+      // Transformer le mot de passe en clé cryptographique
       const enc = new TextEncoder();
+      const pwKey = enc.encode(password);
       const keyMaterial = await crypto.subtle.importKey(
-        "raw", enc.encode(password),
+        "raw",
+        pwKey,
         { name: "PBKDF2" },
         false,
         ["deriveKey"]
@@ -175,7 +294,20 @@
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, encKey, enc.encode(text));
       
-      const iat = Date.now();
+      // Essayer d'obtenir l'heure par consensus, puis l'heure du serveur, puis l'heure locale
+      let now = await getConsensusTime();
+      let timeSource = "consensus";
+      
+      if (!now) {
+        now = await getServerTime();
+        timeSource = now ? "serveur" : "locale";
+        
+        if (!now) {
+          now = Date.now();
+        }
+      }
+      
+      const iat = now;
       const exp = iat + expMinutes * 60 * 1000;
 
       const payload = JSON.stringify({
@@ -185,7 +317,8 @@
         saltHmac: Array.from(saltHmac),
         iterations: iterations,
         iat,
-        exp
+        exp,
+        timeSource: timeSource // Indiquer la source du timestamp
       });
 
       const signature = await crypto.subtle.sign("HMAC", signKey, enc.encode(payload));
@@ -214,19 +347,31 @@
         throw new Error("🚫 Signature invalide. Les données ont peut-être été altérées.");
       }
 
-      const now = Date.now();
+      // Essayer d'obtenir l'heure par consensus, puis l'heure du serveur, puis l'heure locale
+      let now = await getConsensusTime();
+      let timeSource = "consensus";
+      
+      if (!now) {
+        now = await getServerTime();
+        timeSource = now ? "serveur" : "locale";
+        
+        if (!now) {
+          now = Date.now();
+        }
+      }
+      
       const creationTime = new Date(payload.iat);
       const expirationTime = new Date(payload.exp);
 
       // Vérification plus détaillée des dates
       if (now < payload.iat) {
         const timeDiff = Math.round((payload.iat - now) / (60 * 1000));
-        throw new Error(`⏳ Ce message n'est pas encore valide. Il sera accessible dans environ ${timeDiff} minutes. Votre horloge est peut-être en retard.`);
+        throw new Error(`⏳ Ce message n'est pas encore valide. Il sera accessible dans environ ${timeDiff} minutes. Horloge ${timeSource} : ${new Date(now).toLocaleString()}`);
       }
       
       if (now > payload.exp) {
         const expiredSince = Math.round((now - payload.exp) / (60 * 1000));
-        throw new Error(`⏰ Lien expiré depuis environ ${expiredSince} minutes (créé le ${creationTime.toLocaleString()}, expiré le ${expirationTime.toLocaleString()}).`);
+        throw new Error(`⏰ Lien expiré depuis environ ${expiredSince} minutes (créé le ${creationTime.toLocaleString()}, expiré le ${expirationTime.toLocaleString()}). Horloge ${timeSource} : ${new Date(now).toLocaleString()}`);
       }
       
       // Si nous sommes ici, les vérifications temporelles sont passées
@@ -237,7 +382,7 @@
       // Calculer le temps restant avant expiration
       const minutesRemaining = Math.round((payload.exp - now) / (60 * 1000));
       const textWithTimeInfo = new TextDecoder().decode(plaintext) + 
-        `\n\n---\nMessage valide pour encore ${minutesRemaining} minutes. Expire le ${expirationTime.toLocaleString()}.`;
+        `\n\n---\nMessage valide pour encore ${minutesRemaining} minutes. Expire le ${expirationTime.toLocaleString()}.\nVérification effectuée via l'horloge ${timeSource}.`;
       
       return textWithTimeInfo;
     }
@@ -272,6 +417,7 @@
         <button id="go">Générer le lien</button>
         <h3>Lien sécurisé :</h3>
         <pre id="out"></pre>
+        <div id="time-notice" style="margin-top: 1rem; padding: 0.75rem; background: hsl(var(--secondary)); border-radius: var(--radius); font-size: 0.9rem; display: none;"></div>
       `;
       
       // Vérification de la force du mot de passe
@@ -362,8 +508,50 @@
         }
         
         try {
+          document.getElementById("out").textContent = "Génération du lien sécurisé...";
+          
+          // Vérification préalable de l'horloge consensus
+          const consensusTime = await getConsensusTime();
+          let timeNotice = "";
+          
+          if (consensusTime) {
+            const consensusDate = new Date(consensusTime);
+            const localDate = new Date();
+            const diffMinutes = Math.round(Math.abs(consensusTime - Date.now()) / (60 * 1000));
+            
+            if (diffMinutes > 5) {
+              timeNotice = `⚠️ Attention : l'horloge de votre appareil (${localDate.toLocaleTimeString()}) ` +
+                          `diffère de l'horloge consensus (${consensusDate.toLocaleTimeString()}) de ${diffMinutes} minutes. ` +
+                          `L'horloge consensus sera utilisée comme référence temporelle.`;
+            } else {
+              timeNotice = `ℹ️ L'horloge consensus (${consensusDate.toLocaleTimeString()}) sera utilisée comme référence temporelle.`;
+            }
+          } else {
+            // Si le consensus échoue, essayer l'horloge du serveur
+            const serverTime = await getServerTime();
+            if (serverTime) {
+              const serverDate = new Date(serverTime);
+              const localDate = new Date();
+              const diffMinutes = Math.round(Math.abs(serverTime - Date.now()) / (60 * 1000));
+              
+              if (diffMinutes > 5) {
+                timeNotice = `⚠️ Attention : l'horloge de votre appareil (${localDate.toLocaleTimeString()}) ` +
+                            `diffère de celle du serveur (${serverDate.toLocaleTimeString()}) de ${diffMinutes} minutes. ` +
+                            `L'horloge du serveur sera utilisée comme référence temporelle.`;
+              } else {
+                timeNotice = `ℹ️ L'horloge du serveur (${serverDate.toLocaleTimeString()}) sera utilisée comme référence temporelle.`;
+              }
+            } else {
+              timeNotice = "⚠️ Impossible d'obtenir l'heure de référence. L'horloge locale sera utilisée, ce qui présente un risque si elle est incorrecte.";
+            }
+          }
+          
           const b64 = await encryptText(msg, pw, exp, iterations);
-          document.getElementById("out").textContent = location.origin + location.pathname + "#data=" + b64;
+          const secureLink = location.origin + location.pathname + "#data=" + b64;
+          
+          document.getElementById("out").textContent = secureLink;
+          document.getElementById("time-notice").innerHTML = timeNotice;
+          document.getElementById("time-notice").style.display = "block";
         } catch (e) {
           alert("Erreur lors du chiffrement : " + e.message);
         }

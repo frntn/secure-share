@@ -77,10 +77,15 @@ Suite à un audit de sécurité approfondi, plusieurs améliorations ont été a
    - **Après :** Indicateur visuel de force du mot de passe et suggestions pour l'améliorer (longueur, diversité de caractères).
    - **Bénéfice :** Incitation à choisir des mots de passe plus robustes et prévention contre les mots de passe trivialement devinables.
 
-4. **Informations Temporelles Détaillées**
-   - **Avant :** Messages génériques sur l'expiration des liens.
-   - **Après :** Affichage détaillé des informations temporelles, incluant l'heure exacte d'expiration et le temps restant.
-   - **Bénéfice :** Meilleure gestion du cycle de vie des messages et diagnostic facilité des problèmes liés à l'horloge système.
+4. **Informations Temporelles Détaillées et Mécanisme de Consensus Temporel**
+   - **Avant :** Messages génériques sur l'expiration des liens, basés uniquement sur l'horloge locale.
+   - **Après :** 
+     * Affichage détaillé des informations temporelles, incluant l'heure exacte d'expiration et le temps restant.
+     * Mise en place d'un mécanisme de consensus temporel qui consulte plusieurs sources de temps externes et fiables.
+     * Utilisation d'un algorithme de médiane pour déterminer l'heure la plus précise, résistant aux valeurs aberrantes.
+     * Hiérarchie de fiabilité : consensus de sources multiples > horloge du serveur GitHub Pages > horloge locale.
+     * Notification à l'utilisateur en cas de différence significative entre les horloges.
+   - **Bénéfice :** Protection renforcée contre la manipulation délibérée de l'horloge et fiabilité accrue des mécanismes d'expiration, même si une source de temps est compromise ou manipulée.
 
 ### Limitations Restantes
 
@@ -95,8 +100,12 @@ Malgré ces améliorations, certaines limitations fondamentales demeurent inhér
 3. **Vulnérabilité aux Malwares et Keyloggers**
    - La sécurité dépend entièrement de l'intégrité du poste client. Un système compromis peut capturer les données en clair.
 
-4. **Vulnérabilité à la Manipulation de l'Horloge**
-   - Un utilisateur disposant des droits administratifs sur sa machine peut toujours modifier l'horloge système pour contourner les restrictions temporelles.
+4. **Vulnérabilité Réduite à la Manipulation de l'Horloge**
+   - Le système utilise désormais un mécanisme de consensus temporel qui consulte plusieurs sources de temps externes, rendant la manipulation beaucoup plus difficile.
+   - Ce mécanisme de consensus utilise plusieurs services de temps et l'horloge du serveur GitHub Pages, validant son authenticité.
+   - L'algorithme de médiane filtre les valeurs aberrantes, rendant difficile la compromission de l'heure de référence.
+   - Une manipulation de l'horloge locale n'aura généralement pas d'effet tant que l'application peut se connecter à au moins certaines des sources de temps externes.
+   - Cependant, dans un contexte entièrement hors ligne, l'horloge locale reste utilisée comme dernier recours.
 
 ### Mesures Compensatoires
 
