@@ -45,7 +45,7 @@
     }
 
     // --- Crypto ---
-    async function deriveKey(password, salt="fixedsalt") {
+    async function deriveKeys(password) {
       const enc = new TextEncoder();
       const keyMaterial = await crypto.subtle.importKey(
         "raw", enc.encode(password),
@@ -53,34 +53,76 @@
         false,
         ["deriveKey"]
       );
-      return crypto.subtle.deriveKey(
-        { name: "PBKDF2", salt: enc.encode(salt), iterations: 100000, hash: "SHA-256" },
+
+      // Clé pour le chiffrement AES
+      const encKey = await crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: enc.encode("salt-for-aes"), iterations: 100000, hash: "SHA-256" },
         keyMaterial,
         { name: "AES-GCM", length: 256 },
         false,
         ["encrypt", "decrypt"]
       );
+
+      // Clé pour la signature HMAC
+      const signKey = await crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: enc.encode("salt-for-hmac"), iterations: 100000, hash: "SHA-256" },
+        keyMaterial,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign", "verify"]
+      );
+
+      return { encKey, signKey };
     }
 
     async function encryptText(text, password, expMinutes) {
       const enc = new TextEncoder();
-      const key = await deriveKey(password);
+      const { encKey, signKey } = await deriveKeys(password);
       const iv = crypto.getRandomValues(new Uint8Array(12));
-      const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(text));
-      return btoa(JSON.stringify({
+      const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, encKey, enc.encode(text));
+      
+      const iat = Date.now();
+      const exp = iat + expMinutes * 60 * 1000;
+
+      const payload = JSON.stringify({
         iv: Array.from(iv),
         data: bufToBase64(ciphertext),
-        exp: Date.now() + expMinutes*60*1000
+        iat,
+        exp
+      });
+
+      const signature = await crypto.subtle.sign("HMAC", signKey, enc.encode(payload));
+
+      return btoa(JSON.stringify({
+        p: payload,
+        s: bufToBase64(signature)
       }));
     }
 
     async function decryptText(b64, password) {
-      const payload = JSON.parse(atob(b64));
-      if (Date.now() > payload.exp) throw new Error("⏰ Lien expiré");
-      const key = await deriveKey(password);
+      const { p: payloadStr, s: signatureB64 } = JSON.parse(atob(b64));
+      const { encKey, signKey } = await deriveKeys(password);
+      
+      const signature = base64ToBuf(signatureB64);
+      const isValid = await crypto.subtle.verify("HMAC", signKey, signature, new TextEncoder().encode(payloadStr));
+
+      if (!isValid) {
+        throw new Error("🚫 Signature invalide. Les données ont peut-être été altérées.");
+      }
+
+      const payload = JSON.parse(payloadStr);
+      const now = Date.now();
+
+      if (now < payload.iat) {
+        throw new Error("⏳ Lien pas encore valide (vérifiez l'horloge de votre appareil).");
+      }
+      if (now > payload.exp) {
+        throw new Error("⏰ Lien expiré.");
+      }
+      
       const iv = new Uint8Array(payload.iv);
       const ciphertext = base64ToBuf(payload.data);
-      const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+      const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, encKey, ciphertext);
       return new TextDecoder().decode(plaintext);
     }
 
