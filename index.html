@@ -365,13 +365,11 @@
 
       // Vérification plus détaillée des dates
       if (now < payload.iat) {
-        const timeDiff = Math.round((payload.iat - now) / (60 * 1000));
-        throw new Error(`⏳ Ce message n'est pas encore valide. Il sera accessible dans environ ${timeDiff} minutes. Horloge ${timeSource} : ${new Date(now).toLocaleString()}`);
+        throw new Error(`⏳ Ce message n'est pas encore valide. Veuillez réessayer plus tard.`);
       }
       
       if (now > payload.exp) {
-        const expiredSince = Math.round((now - payload.exp) / (60 * 1000));
-        throw new Error(`⏰ Lien expiré depuis environ ${expiredSince} minutes (créé le ${creationTime.toLocaleString()}, expiré le ${expirationTime.toLocaleString()}). Horloge ${timeSource} : ${new Date(now).toLocaleString()}`);
+        throw new Error(`⏰ Ce lien a expiré et n'est plus accessible. Veuillez demander un nouveau lien au créateur du message.`);
       }
       
       // Si nous sommes ici, les vérifications temporelles sont passées
@@ -380,9 +378,8 @@
       const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, encKey, ciphertext);
       
       // Calculer le temps restant avant expiration
-      const minutesRemaining = Math.round((payload.exp - now) / (60 * 1000));
       const textWithTimeInfo = new TextDecoder().decode(plaintext) + 
-        `\n\n---\nMessage valide pour encore ${minutesRemaining} minutes. Expire le ${expirationTime.toLocaleString()}.\nVérification effectuée via l'horloge ${timeSource}.`;
+        `\n\n---\nCe message est actuellement valide.\nVérification effectuée via l'horloge ${timeSource}.`;
       
       return textWithTimeInfo;
     }
