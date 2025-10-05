@@ -1,3 +1,5 @@
+![Alt](https://repobeats.axiom.co/api/embed/dfafc0b414ecb7e84caccfb71a24fd91ee3b4cbf.svg "Repobeats analytics image")
+
 # 🔒 Secure-Share
 
 **Secure-Share** est un outil web minimaliste et autonome pour le partage sécurisé de courts textes. Il fonctionne entièrement dans le navigateur (côté client), ne nécessite aucun serveur et ne stocke aucune donnée.
